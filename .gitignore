@@ -10,6 +10,7 @@
 /dataSources.local.xml
 .gradle
 .idea
+
 build/
 gradle/
 .vscode/
@@ -22,3 +23,6 @@ uploads/
 # Local environment configs
 application-local.yml
 application-dev.yml
+
+build/
+
