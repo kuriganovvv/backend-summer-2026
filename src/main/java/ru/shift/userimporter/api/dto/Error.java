@@ -7,6 +7,6 @@ import lombok.Data;
 @Data
 @AllArgsConstructor
 @Builder
-public class FileIdResponse{
-    private final String fileId; // идентификатор файла
+public class Error {
+    private String message;
 }

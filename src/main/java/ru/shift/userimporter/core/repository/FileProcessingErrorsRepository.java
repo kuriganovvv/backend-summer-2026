@@ -1,7 +1,10 @@
 package ru.shift.userimporter.core.repository;
 
 import org.springframework.data.jpa.repository.JpaRepository;
-import ru.shift.userimporter.core.model.FileProcessingErrors;
+import ru.shift.userimporter.core.model.FileProcessingError;
 
-public interface FileProcessingErrorsRepository extends JpaRepository<FileProcessingErrors,Long> {
+import java.util.List;
+
+public interface FileProcessingErrorsRepository extends JpaRepository<FileProcessingError,Long> {
+    List<FileProcessingError> findByFileId(Integer fileId);
 }

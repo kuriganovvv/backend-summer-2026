@@ -6,5 +6,6 @@ import ru.shift.userimporter.core.model.User;
 
 @Repository
 public interface UserRepository extends JpaRepository<User,Long>{
-
+    boolean existsByPhone(String phone);
+    boolean existsByEmail(String email);
 }

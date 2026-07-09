@@ -1,13 +1,10 @@
 package ru.shift.userimporter.core.service;
 
-import ru.shift.userimporter.core.model.User;
-import ru.shift.userimporter.core.repository.UserRepository;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
+import ru.shift.userimporter.api.dto.ClientResponse;
 
 import java.util.List;
-import java.util.UUID;
 public interface UserService{
 
-    List<User> getAllUsers();
+    List<ClientResponse> getAllUsers();
+    List<ClientResponse> getUsersFiltered(String phone, String name, String lastName, String email,Integer limit,Integer offset);
 }
