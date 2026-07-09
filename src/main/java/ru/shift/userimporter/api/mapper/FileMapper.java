@@ -18,7 +18,7 @@ public class FileMapper{
                 .status(file.getStatus())
                 .fileStatistic(FileStatistic.builder()
                         .insertedLinesCount(file.getValidRows())
-                        .updatedLinesCount(file.getProcessedRows() != null ? file.getProcessedRows() : 0)
+                        .updatedLinesCount(0)
                         .errorProcessedLinesCount(file.getInvalidRows())
                         .build()
                 )

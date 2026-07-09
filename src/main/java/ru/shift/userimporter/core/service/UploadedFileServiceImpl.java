@@ -4,13 +4,16 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.DigestUtils;
 import org.springframework.web.multipart.MultipartFile;
 import ru.shift.userimporter.api.dto.DetailedFileStatistic;
 import ru.shift.userimporter.api.dto.FileResponse;
 import ru.shift.userimporter.api.dto.FileStatistic;
 import ru.shift.userimporter.api.dto.ProcessingError;
 import ru.shift.userimporter.api.mapper.FileMapper;
+import ru.shift.userimporter.core.exception.FileAlreadyExistsException;
 import ru.shift.userimporter.core.exception.ValidationException;
+import ru.shift.userimporter.core.model.ErrorCode;
 import ru.shift.userimporter.core.model.FileProcessingError;
 import ru.shift.userimporter.core.model.UploadedFile;
 import ru.shift.userimporter.core.model.User;
@@ -35,7 +38,7 @@ import java.util.stream.Stream;
 
 @Service
 @RequiredArgsConstructor
-public class UploadedFileServiceImpl implements UploadedFileService {
+public class UploadedFileServiceImpl implements UploadedFileService{
     private final UploadedFileRepository uploadedFileRepository;
     private final UserRepository userRepository;
     private final FileProcessingErrorsRepository fileProcessingErrorsRepository;
@@ -43,6 +46,15 @@ public class UploadedFileServiceImpl implements UploadedFileService {
 
     public UploadedFile saveFile(MultipartFile file){
         String originalName = file.getOriginalFilename();
+        String hash;
+        try {
+            hash = calculateHash(file);
+        } catch (IOException e) {
+            throw new RuntimeException("Не удалось вычислить хеш файла", e);
+        }
+        uploadedFileRepository.findByHash(hash).ifPresent(existingFile -> {
+            throw new FileAlreadyExistsException("Файл с таким содержимым уже загружен");
+        });
         String uniqueFilename = UUID.randomUUID() + "_" + originalName;
         Path uploadPath = Paths.get("uploads");
         try{
@@ -60,13 +72,14 @@ public class UploadedFileServiceImpl implements UploadedFileService {
         uploadedFile.setOriginalFilename(originalName);
         uploadedFile.setStoragePath(filePath.toString());
         uploadedFile.setStatus("NEW");
+        uploadedFile.setHash(hash);
 
         return uploadedFileRepository.save(uploadedFile);
 
     }
     @Transactional
     @Async
-    public void processFile(Long fileId) {
+    public void processFile(Long fileId){
         UploadedFile file = uploadedFileRepository.findById(fileId).orElseThrow(() -> new ResourseNotFountException("Файл не найден"));
         file.setStatus("IN_PROGRESS");
         uploadedFileRepository.save(file);
@@ -89,49 +102,57 @@ public class UploadedFileServiceImpl implements UploadedFileService {
                         .birthDate(LocalDate.parse(fields[5]))
                         .build();
 
-                    if (!(user.getFirstName().matches("^[А-ЯЁ][а-яёА-ЯЁ'\\- ]{2,}$") && user.getFirstName().length() >= 3 && user.getFirstName().length() <= 50)) {
-                        throw new ValidationException("Некорректное имя");
+                    if (!user.getFirstName().matches("^[А-ЯЁ][а-яёА-ЯЁ'\\- ]{2,}$")
+                            || user.getFirstName().length() < 3
+                            || user.getFirstName().length() > 50) {
+                        throw new ValidationException(ErrorCode.INVALID_NAME, "Некорректное имя");
                     }
-                    if (!(user.getLastName().matches("^[А-ЯЁ][а-яёА-ЯЁ'\\- ]{2,}$") && user.getLastName().length() >= 3 && user.getLastName().length() <= 50)) {
-                        throw new ValidationException("Некорректная фамиилия");
+                    if (!user.getLastName().matches("^[А-ЯЁ][а-яёА-ЯЁ'\\- ]{2,}$")
+                            || user.getLastName().length() < 3
+                            || user.getLastName().length() > 50) {
+                        throw new ValidationException(ErrorCode.INVALID_LAST_NAME,"Некорректная фамиилия");
                     }
                     if (user.getMiddleName() != null && !user.getMiddleName().isBlank()) {
-                        if (!(user.getMiddleName().matches("^[А-ЯЁ][а-яёА-ЯЁ'\\- ]{2,}$") || user.getMiddleName().length() < 3 || user.getMiddleName().length() > 50)) {
-                            throw new ValidationException("Некорректное отчество");
+                        if (!user.getMiddleName().matches("^[А-ЯЁ][а-яёА-ЯЁ'\\- ]{2,}$")
+                                || user.getMiddleName().length() < 3
+                                || user.getMiddleName().length() > 50) {
+                            throw new ValidationException(ErrorCode.INVALID_MIDDLE_NAME,"Некорректное отчество");
                         }
                     }
                     if (!(user.getEmail().matches("^[A-Za-z0-9._%-]+@(shift\\.com|shift\\.ru)$") && user.getEmail().length() <= 100)) {
-                        throw new ValidationException("Некорректная почта");
+                        throw new ValidationException(ErrorCode.INVALID_EMAIL,"Некорректная почта");
                     }
                     if (!(user.getPhone().matches("^7[0-9]{10}$"))) {
-                        throw new ValidationException("Некорректный телефон");
+                        throw new ValidationException(ErrorCode.INVALID_PHONE,"Некорректный телефон");
                     }
                     if (userRepository.existsByPhone(user.getPhone())) {
-                        throw new ValidationException("Телефон уже существует: " + user.getPhone());
+                        throw new ValidationException(ErrorCode.INVALID_PHONE,"Телефон уже существует: " + user.getPhone());
                     }
                     if (userRepository.existsByEmail(user.getEmail())) {
-                        throw new ValidationException("Email уже существует: " + user.getEmail());
+                        throw new ValidationException(ErrorCode.INVALID_EMAIL,"Email уже существует: " + user.getEmail());
                     }
                     if (LocalDate.now().getYear() - user.getBirthDate().getYear() < 18) {
-                        throw new ValidationException("Некорректный возраст");
+                        throw new ValidationException(ErrorCode.INVALID_BIRTHDATE,"Некорректный возраст");
                     }
 
                     userRepository.save(user);
                     validRows.incrementAndGet();
+                } catch (ValidationException e){
+                    saveError(fileId, rowNumber.get(), line,
+                            e.getErrorCode() != null ? e.getErrorCode().name() : ErrorCode.INVALID_FORMAT.name(),
+                            e.getMessage());
+                    invalidRows.incrementAndGet();
                 } catch (Exception e) {
-                    FileProcessingError error = FileProcessingError.builder()
-                            .fileId(Math.toIntExact(fileId))
-                            .rowNumber(rowNumber.get())
-                            .errorMessage(e.getMessage())
-                            .rawData(line)
-                            .errorCode("VALIDATION_ERROR")
-                            .build();
-                    fileProcessingErrorsRepository.save(error);
+                    saveError(fileId, rowNumber.get(), line,
+                            ErrorCode.INVALID_FORMAT.name(),
+                            e.getMessage());
                     invalidRows.incrementAndGet();
                 }
             });
 
-        } catch (IOException e) {
+        } catch (IOException e){
+            file.setStatus("FAILED");
+            uploadedFileRepository.save(file);
             throw new RuntimeException("Не удалось прочитать файл");
         }
         file.setTotalRows(rowNumber.get());
@@ -143,7 +164,7 @@ public class UploadedFileServiceImpl implements UploadedFileService {
     }
 
     @Override
-    public List<FileResponse> getAllStatistics(String status) {
+    public List<FileResponse> getAllStatistics(String status){
         List<UploadedFile> files;
         if(status!=null && !status.isBlank()){
             files=uploadedFileRepository.findByStatus(status);
@@ -171,11 +192,26 @@ public class UploadedFileServiceImpl implements UploadedFileService {
 
         return DetailedFileStatistic.builder()
                 .insertedLinesCount(file.getValidRows())
-                .updatedLinesCount(file.getProcessedRows())
+                .updatedLinesCount(0)
                 .errors(errors)
                 .build();
     }
     public void checkFileExists(Long fileId){
         uploadedFileRepository.findById(fileId).orElseThrow(()->new ResourseNotFountException("Файл не найден"));
+    }
+    private void saveError(Long fileId,int rowNumber, String line,String errorCode, String message){
+        FileProcessingError error= FileProcessingError.builder()
+                .fileId(Math.toIntExact(fileId))
+                .rowNumber(rowNumber)
+                .errorMessage(message)
+                .rawData(line)
+                .errorCode(errorCode)
+                .build();
+        fileProcessingErrorsRepository.save(error);
+    }
+    private String calculateHash(MultipartFile file) throws IOException{
+        try (InputStream inputStream = file.getInputStream()) {
+            return DigestUtils.md5DigestAsHex(inputStream);
+        }
     }
 }
